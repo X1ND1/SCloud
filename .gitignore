@@ -1,0 +1,18 @@
+# build output
+/target/
+/app/
+/dist/
+/lib/
+
+# downloaded binaries (setup.bat fetches them)
+*.dll
+*.exe
+*.part
+
+# editors / OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

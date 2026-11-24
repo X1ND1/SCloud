@@ -1,0 +1,387 @@
+//! Lightweight localization: Russian (source), Ukrainian, English.
+//! The language follows the system (or is set manually in settings). The translation table is static strings,
+//! built once; lookups are by the Russian text, so the code stays readable.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::OnceLock;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lang {
+    Ru = 0,
+    Uk = 1,
+    En = 2,
+}
+
+static LANG: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_lang(l: Lang) {
+    LANG.store(l as u8, Ordering::Relaxed);
+}
+
+pub fn lang() -> Lang {
+    match LANG.load(Ordering::Relaxed) {
+        1 => Lang::Uk,
+        2 => Lang::En,
+        _ => Lang::Ru,
+    }
+}
+
+/// System language: Ukrainian → uk, Russian/Belarusian/Kazakh → ru, otherwise English.
+pub fn detect() -> Lang {
+    let loc = sys_locale::get_locale().unwrap_or_default().to_lowercase();
+    if loc.starts_with("uk") {
+        Lang::Uk
+    } else if loc.starts_with("ru") || loc.starts_with("be") || loc.starts_with("kk") {
+        Lang::Ru
+    } else {
+        Lang::En
+    }
+}
+
+/// "Language" setting: "auto" | "ru" | "uk" | "en".
+pub fn apply_setting(code: &str) {
+    set_lang(match code {
+        "ru" => Lang::Ru,
+        "uk" => Lang::Uk,
+        "en" => Lang::En,
+        _ => detect(),
+    });
+}
+
+fn table() -> &'static HashMap<&'static str, (&'static str, &'static str)> {
+    static T: OnceLock<HashMap<&'static str, (&'static str, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| ROWS.iter().map(|(ru, uk, en)| (*ru, (*uk, *en))).collect())
+}
+
+/// Translate a UI string (the key is the Russian text).
+pub fn t(ru: &str) -> &str {
+    let l = lang();
+    if l == Lang::Ru {
+        return ru;
+    }
+    match table().get(ru) {
+        Some((uk, en)) => {
+            if l == Lang::Uk {
+                uk
+            } else {
+                en
+            }
+        }
+        None => ru,
+    }
+}
+
+/// Translate a template with substitutions: `tf("Скачано: {name}", &[("{name}", name)])`.
+/// Positional `{}` are substituted in order.
+pub fn tf(tpl: &str, vals: &[(&str, String)]) -> String {
+    let mut s = t(tpl).to_string();
+    for (k, v) in vals {
+        s = s.replacen(k, v, 1);
+    }
+    s
+}
+
+#[rustfmt::skip]
+const ROWS: &[(&str, &str, &str)] = &[
+    ("Режим отдыха", "Режим відпочинку", "Relax mode"),
+    ("Полный экран", "Повний екран", "Full screen"),
+    ("Режим отдыха (F10)", "Режим відпочинку (F10)", "Relax mode (F10)"),
+    ("Esc — выйти", "Esc — вийти", "Esc to exit"),
+    ("Нейросеть установлена — подгоняю текст", "Нейромережу встановлено — підганяю текст", "AI installed — aligning the lyrics"),
+    ("Не получилось установить нейросеть: {e}", "Не вдалося встановити нейромережу: {e}", "Couldn't install the AI: {e}"),
+    ("Скачиваю нейросеть… {p}%", "Завантажую нейромережу… {p}%", "Downloading the AI… {p}%"),
+    ("Нейросеть подгонит время строк точно. Работает на твоём компе, бесплатно.", "Нейромережа точно піджене час рядків. Працює на твоєму компі, безкоштовно.", "The AI will align the line timing exactly. Runs on your PC, for free."),
+    ("Установить нейросеть (~150 МБ)", "Встановити нейромережу (~150 МБ)", "Install the AI (~150 MB)"),
+    ("Нейросеть подогнала текст под трек", "Нейромережа підігнала текст під трек", "The AI aligned the lyrics to the track"),
+    ("Не получилось подогнать текст: {e}", "Не вдалося підігнати текст: {e}", "Couldn't align the lyrics: {e}"),
+    ("Нейросеть слушает трек… {p}%", "Нейромережа слухає трек… {p}%", "AI is listening to the track… {p}%"),
+    ("Подогнать нейросетью", "Підігнати нейромережею", "Align with AI"),
+    ("Для точной подгонки нейросетью запусти setup.bat — он скачает whisper", "Для точного підганяння нейромережею запусти setup.bat — він завантажить whisper", "Run setup.bat to download whisper for exact AI alignment"),
+    ("подогнан нейросетью", "підігнано нейромережею", "aligned by AI"),
+    ("Текст: {src} · время строк примерное. ПКМ по строке, которая звучит сейчас, — подгоню весь текст", "Текст: {src} · час рядків приблизний. ПКМ по рядку, який звучить зараз, — піджену весь текст", "Lyrics: {src} · timing is approximate. Right-click the line playing now to align everything"),
+    ("Текст: {src} · клик по строке — перемотка, ПКМ — «звучит сейчас» (подогнать время)", "Текст: {src} · клік по рядку — перемотування, ПКМ — «звучить зараз» (підігнати час)", "Lyrics: {src} · click a line to seek, right-click — “playing now” (align timing)"),
+    ("Текст подогнан: сдвиг {s} с", "Текст підігнано: зсув {s} с", "Lyrics aligned: offset {s} s"),
+    ("Текст: {src} · время строк примерное — можно поправить сдвигом или синхронизировать самому", "Текст: {src} · час рядків приблизний — можна підправити зсувом або синхронізувати самому", "Lyrics: {src} · line timing is approximate — adjust the offset or sync it yourself"),
+    ("Всё вперемешку", "Усе впереміш", "A bit of everything"),
+    ("Незнакомое", "Незнайоме", "Unfamiliar"),
+    ("Любимое", "Улюблене", "Favorites"),
+    ("Популярное", "Популярне", "Popular"),
+    ("Спокойное", "Спокійне", "Calm"),
+    ("Бодрое", "Бадьоре", "Energetic"),
+    ("100% музыки, 0% слов", "100% музики, 0% слів", "100% music, 0% words"),
+    ("Моя волна", "Моя хвиля", "My wave"),
+    ("Встряхнуть волну", "Струснути хвилю", "Shake up the wave"),
+    ("Нажми ▶ — волна подстроится под тебя", "Натисни ▶ — хвиля підлаштується під тебе", "Press ▶ — the wave adapts to you"),
+    ("Артист", "Артист", "Artist"),
+    (" · SoundCloud хранит не всю историю, за год может быть больше", " · SoundCloud зберігає не всю історію, за рік може бути більше", " · SoundCloud keeps only part of the history, the yearly total may be higher"),
+    ("{} дн.", "{} дн.", "{} days"),
+    ("Вставь текст песни. Строки с таймкодами [01:23.45] станут синхронными — иначе текст будет обычным.", "Встав текст пісні. Рядки з таймкодами [01:23.45] стануть синхронними — інакше текст буде звичайним.", "Paste the lyrics. Lines with timestamps [01:23.45] become synced — otherwise it’s plain text."),
+    ("Добавить в плейлист", "Додати до плейлиста", "Add to playlist"),
+    ("Добавить свой текст", "Додати свій текст", "Add your own lyrics"),
+    ("Добавлено в «{name}»: {t}", "Додано до «{name}»: {t}", "Added to “{name}”: {t}"),
+    ("Заново", "Заново", "Restart"),
+    ("Изменить свой текст", "Змінити свій текст", "Edit your lyrics"),
+    ("Импорт из SoundCloud", "Імпорт із SoundCloud", "Import from SoundCloud"),
+    ("Импортировано плейлистов: {n}", "Імпортовано плейлистів: {n}", "Playlists imported: {n}"),
+    ("Искал в LRCLIB и Genius. Можно вставить текст самому — обычный или с таймкодами.", "Шукав у LRCLIB і Genius. Можна вставити текст самому — звичайний або з таймкодами.", "Searched LRCLIB and Genius. You can add the lyrics yourself — plain or with timestamps."),
+    ("История с {date} · {plays} прослушиваний · {uniq} разных треков", "Історія з {date} · {plays} прослуховувань · {uniq} різних треків", "History since {date} · {plays} plays · {uniq} different tracks"),
+    ("На SoundCloud у тебя нет плейлистов", "На SoundCloud у тебе немає плейлистів", "You have no playlists on SoundCloud"),
+    ("Нажимай Пробел или Enter, когда начинается строка. Backspace — шаг назад.", "Натискай Пробіл або Enter, коли починається рядок. Backspace — крок назад.", "Press Space or Enter when a line starts. Backspace steps back."),
+    ("Назад", "Назад", "Back"),
+    ("Не удалось загрузить плейлисты: {e}", "Не вдалося завантажити плейлисти: {e}", "Couldn’t load playlists: {e}"),
+    ("Новый плейлист", "Новий плейлист", "New playlist"),
+    ("Отмена", "Скасувати", "Cancel"),
+    ("Отметить строку", "Позначити рядок", "Mark line"),
+    ("Переименовать", "Перейменувати", "Rename"),
+    ("Плейлист", "Плейлист", "Playlist"),
+    ("Плейлист пуст. Правый клик по треку → «Добавить в плейлист».", "Плейлист порожній. Правий клік по треку → «Додати до плейлиста».", "The playlist is empty. Right-click a track → “Add to playlist”."),
+    ("Правый клик по любому треку → «Добавить в плейлист»", "Правий клік по будь-якому треку → «Додати до плейлиста»", "Right-click any track → “Add to playlist”"),
+    ("Свой текст", "Свій текст", "Own lyrics"),
+    ("Сдвиг", "Зсув", "Offset"),
+    ("Синхронизировать под трек", "Синхронізувати з треком", "Sync to the track"),
+    ("Сохранить", "Зберегти", "Save"),
+    ("Строка {i} из {n} · {pos}", "Рядок {i} з {n} · {pos}", "Line {i} of {n} · {pos}"),
+    ("Текст песни…", "Текст пісні…", "Lyrics…"),
+    ("Текст сохранён", "Текст збережено", "Lyrics saved"),
+    ("Текст: {src} · без таймкодов", "Текст: {src} · без таймкодів", "Lyrics: {src} · not synced"),
+    ("Текст: {src} · клик по строке — перемотка", "Текст: {src} · клік по рядку — перемотування", "Lyrics: {src} · click a line to seek"),
+    ("Точно удалить?", "Точно видалити?", "Delete for sure?"),
+    ("Трек начнётся сначала — нажимай Пробел в начале каждой строки", "Трек почнеться спочатку — натискай Пробіл на початку кожного рядка", "The track restarts — press Space at the start of each line"),
+    ("Убрать из плейлиста", "Прибрати з плейлиста", "Remove from playlist"),
+    ("Удалить свой текст", "Видалити свій текст", "Delete your lyrics"),
+    ("Уже есть в «{name}»", "Вже є в «{name}»", "Already in “{name}”"),
+    ("свой текст", "свій текст", "your own"),
+    ("← Все плейлисты", "← Усі плейлисти", "← All playlists"),
+    ("▶ Слушать", "▶ Слухати", "▶ Play"),
+    ("Плейлисты  {}", "Плейлисти  {}", "Playlists  {}"),
+    ("Текст песни", "Текст пісні", "Lyrics"),
+    ("Закрыть текст", "Закрити текст", "Close lyrics"),
+    ("Тексты: LRCLIB · клик по строке — перемотка", "Тексти: LRCLIB · клік по рядку — перемотування", "Lyrics: LRCLIB · click a line to seek"),
+    ("Ищу текст…", "Шукаю текст…", "Looking for lyrics…"),
+    ("Текст не найден", "Текст не знайдено", "No lyrics found"),
+    ("Для этого трека в базе LRCLIB текста пока нет.", "Для цього треку в базі LRCLIB тексту поки немає.", "LRCLIB has no lyrics for this track yet."),
+    ("«{}» сыграет следующим", "«{}» зіграє наступним", "“{}” plays next"),
+    ("«{}» добавлен в очередь", "«{}» додано в чергу", "“{}” added to queue"),
+    ("Радио по треку", "Радіо за треком", "Track radio"),
+    ("Таймер сна выключен", "Таймер сну вимкнено", "Sleep timer off"),
+    ("Пауза в конце этого трека", "Пауза в кінці цього треку", "Pause at the end of this track"),
+    ("Пауза через {} мин", "Пауза через {} хв", "Pause in {} min"),
+    ("Таймер сна: музыка на паузе. Спокойной ночи 🌙", "Таймер сну: музика на паузі. На добраніч 🌙", "Sleep timer: music paused. Good night 🌙"),
+    ("Таймер сна", "Таймер сну", "Sleep timer"),
+    ("Через {} мин", "Через {} хв", "In {} min"),
+    ("В конце трека", "В кінці треку", "At end of track"),
+    ("Выключить", "Вимкнути", "Turn off"),
+    ("Пауза через {}:{}", "Пауза через {}:{}", "Pause in {}:{}"),
+    ("Играть следующим", "Грати наступним", "Play next"),
+    ("Добавить в очередь", "Додати в чергу", "Add to queue"),
+    ("Лайк / убрать лайк", "Лайк / прибрати лайк", "Like / unlike"),
+    ("Скачать MP3", "Завантажити MP3", "Download MP3"),
+    ("Скопировать ссылку", "Скопіювати посилання", "Copy link"),
+    ("Очередь", "Черга", "Queue"),
+    ("Сейчас играет", "Зараз грає", "Now playing"),
+    ("Далее", "Далі", "Up next"),
+    ("Пусто — правый клик по треку → «Добавить в очередь»", "Порожньо — правий клік по треку → «Додати в чергу»", "Empty — right-click a track → “Add to queue”"),
+    ("Убрать из очереди", "Прибрати з черги", "Remove from queue"),
+    ("Горячие клавиши", "Гарячі клавіші", "Keyboard shortcuts"),
+    ("Пауза / продолжить", "Пауза / продовжити", "Pause / resume"),
+    ("Перемотка на 5 с (с Shift — 30 с)", "Перемотування на 5 с (з Shift — 30 с)", "Seek 5 s (with Shift — 30 s)"),
+    ("Громкость", "Гучність", "Volume"),
+    ("Следующий / предыдущий трек", "Наступний / попередній трек", "Next / previous track"),
+    ("Лайк", "Лайк", "Like"),
+    ("Без звука", "Без звуку", "Mute"),
+    ("Эта подсказка", "Ця підказка", "This help"),
+    ("Закрыть окна", "Закрити вікна", "Close windows"),
+    ("Эквалайзер", "Еквалайзер", "Equalizer"),
+    ("Выровнять громкость", "Вирівняти гучність", "Normalize volume"),
+    ("Сбросить EQ", "Скинути EQ", "Reset EQ"),
+    ("Мои темы", "Мої теми", "My themes"),
+    ("Клик — применить, правый клик — удалить", "Клік — застосувати, правий клік — видалити", "Click to apply, right-click to delete"),
+    ("Удалить", "Видалити", "Delete"),
+    ("Название темы", "Назва теми", "Theme name"),
+    ("💾 Сохранить тему", "💾 Зберегти тему", "💾 Save theme"),
+    ("Тема {}", "Тема {}", "Theme {}"),
+    ("Тема «{name}» сохранена", "Тему «{name}» збережено", "Theme “{name}” saved"),
+    ("📋 Скопировать код", "📋 Скопіювати код", "📋 Copy code"),
+    ("Код темы скопирован: {code}", "Код теми скопійовано: {code}", "Theme code copied: {code}"),
+    ("Код темы, например 04G20-81040-…", "Код теми, наприклад 04G20-81040-…", "Theme code, e.g. 04G20-81040-…"),
+    ("Применить код", "Застосувати код", "Apply code"),
+    ("Импорт {}", "Імпорт {}", "Imported {}"),
+    ("Тема из кода применена и сохранена в «Мои темы»", "Тему з коду застосовано й збережено в «Мої теми»", "Theme from code applied and saved to “My themes”"),
+    ("Неверный код темы — проверь, что скопирован целиком", "Невірний код теми — перевір, що скопійовано повністю", "Invalid theme code — make sure you copied all of it"),
+    ("Анимировать иконку на панели задач, пока играет музыка", "Анімувати іконку на панелі задач, поки грає музика", "Animate the taskbar icon while music is playing"),
+    (" (защита от ботов SoundCloud)", " (захист від ботів SoundCloud)", " (SoundCloud bot protection)"),
+    (" Go+ превью ", " Go+ прев’ю ", " Go+ preview "),
+    (" — поэтому цифра за год может быть меньше реальной", " — тому цифра за рік може бути меншою за реальну", " — so the yearly total may be lower than real"),
+    ("+{v:.0} дБ", "+{v:.0} дБ", "+{v:.0} dB"),
+    ("401: вход в SoundCloud устарел — войди заново", "401: вхід у SoundCloud застарів — увійди знову", "401: SoundCloud sign-in expired — sign in again"),
+    ("401: вход устарел — войди заново", "401: вхід застарів — увійди знову", "401: sign-in expired — sign in again"),
+    ("8D лучше в наушниках. Минусовка убирает вокал из центра — работает не на всех треках.", "8D краще в навушниках. Мінусовка прибирає вокал із центру — працює не на всіх треках.", "8D sounds best on headphones. Instrumental removes centered vocals — works on some tracks only."),
+    ("SoundCloud не вернул ссылку на поток", "SoundCloud не повернув посилання на потік", "SoundCloud returned no stream link"),
+    ("SoundCloud ответил {status}{hint}", "SoundCloud відповів {status}{hint}", "SoundCloud responded {status}{hint}"),
+    ("SoundCloud ответил {s}", "SoundCloud відповів {s}", "SoundCloud responded {s}"),
+    ("SoundCloud отдал историю с {} · {} прослушиваний, {} разных треков{}", "SoundCloud віддав історію з {} · {} прослуховувань, {} різних треків{}", "SoundCloud history since {} · {} plays, {} different tracks{}"),
+    ("ffmpeg не найден ({e}). Запусти setup.bat ещё раз — он его скачает", "ffmpeg не знайдено ({e}). Запусти setup.bat ще раз — він його завантажить", "ffmpeg not found ({e}). Run setup.bat again — it will download it"),
+    ("{count} треков", "{count} треків", "{count} tracks"),
+    ("{e}\nНажми, чтобы попробовать ещё раз", "{e}\nНатисни, щоб спробувати ще раз", "{e}\nClick to try again"),
+    ("{m} мин", "{m} хв", "{m} min"),
+    ("{v:+.0} дБ", "{v:+.0} дБ", "{v:+.0} dB"),
+    ("{v:+.1} полут.", "{v:+.1} півт.", "{v:+.1} st"),
+    ("{} · пауза", "{} · пауза", "{} · paused"),
+    ("{} дн. 🔥", "{} дн. 🔥", "{} days 🔥"),
+    ("{} по месяцам", "{} по місяцях", "{} by month"),
+    ("{} ч {} мин", "{} год {} хв", "{} h {} min"),
+    ("«{}» не воспроизводится: {e}", "«{}» не відтворюється: {e}", "“{}” can’t be played: {e}"),
+    ("Аккаунт SoundCloud", "Акаунт SoundCloud", "SoundCloud account"),
+    ("Аккаунт SoundCloud — настройки", "Акаунт SoundCloud — налаштування", "SoundCloud account — settings"),
+    ("Аккаунт SoundCloud: {e}", "Акаунт SoundCloud: {e}", "SoundCloud account: {e}"),
+    ("Акцент", "Акцент", "Accent"),
+    ("Альт-рок", "Альт-рок", "Alt rock"),
+    ("Без названия", "Без назви", "Untitled"),
+    ("Библиотека", "Бібліотека", "Library"),
+    ("Больше не покажу «{}»", "Більше не покажу «{}»", "Won’t show “{}” again"),
+    ("В истории SoundCloud пока пусто", "В історії SoundCloud поки порожньо", "Your SoundCloud history is empty"),
+    ("Войди — и лайки, история будут те же, что на сайте и в телефоне.", "Увійди — і лайки та історія будуть ті самі, що на сайті й у телефоні.", "Sign in to get the same likes and history as on the website and your phone."),
+    ("Войти", "Увійти", "Sign in"),
+    ("Войти в SoundCloud", "Увійти в SoundCloud", "Sign in to SoundCloud"),
+    ("Волна дня", "Хвиля дня", "Daily Wave"),
+    ("Волна твоего вкуса", "Хвиля твого смаку", "Your Taste Wave"),
+    ("Вошёл как {} — синхронизирую лайки и историю…", "Увійшов як {} — синхронізую лайки та історію…", "Signed in as {} — syncing likes and history…"),
+    ("Время оценивается по истории: длина трека или время до следующего запуска — что меньше.", "Час оцінюється за історією: довжина треку або час до наступного запуску — що менше.", "Time is estimated from history: track length or time until the next play, whichever is shorter."),
+    ("Все", "Усі", "All"),
+    ("Все жанры", "Усі жанри", "All genres"),
+    ("Вход: {e}", "Вхід: {e}", "Sign-in: {e}"),
+    ("Вход…", "Вхід…", "Signing in…"),
+    ("Выйти", "Вийти", "Sign out"),
+    ("Высокие", "Високі", "Treble"),
+    ("Вышел из аккаунта SoundCloud. Лайки и история остались локально", "Вийшов з акаунта SoundCloud. Лайки та історія залишилися локально", "Signed out of SoundCloud. Likes and history stay on this PC"),
+    ("Главная", "Головна", "Home"),
+    ("Градиент фона — тяни ключи, клик по полосе добавляет новый", "Градієнт фону — тягни ключі, клік по смузі додає новий", "Background gradient — drag the stops, click the bar to add one"),
+    ("Драм-н-бейс", "Драм-н-бейс", "Drum & bass"),
+    ("Ещё в твоём вкусе", "Ще у твоєму смаку", "More of what you like"),
+    ("Жми ♥ у треков", "Тисни ♥ біля треків", "Tap ♥ on tracks"),
+    ("За 7 дней", "За 7 днів", "Last 7 days"),
+    ("За {} год", "За {} рік", "In {}"),
+    ("За месяц", "За місяць", "This month"),
+    ("Загрузить ещё", "Завантажити ще", "Load more"),
+    ("Загрузки", "Завантаження", "Downloads"),
+    ("Затемнение панелей", "Затемнення панелей", "Panel shade"),
+    ("Звук", "Звук", "Sound"),
+    ("Играет. Нажми ещё раз, чтобы поставить на паузу", "Грає. Натисни ще раз, щоб поставити на паузу", "Playing. Click again to pause"),
+    ("Имя приложения в Discord Developer Portal = текст после «Слушает».", "Назва застосунку в Discord Developer Portal = текст після «Слухає».", "The app name in Discord Developer Portal is shown after “Listening to”."),
+    ("Инди", "Інді", "Indie"),
+    ("История  {}", "Історія  {}", "History  {}"),
+    ("Ключ {} из {}", "Ключ {} з {}", "Stop {} of {}"),
+    ("Концертный зал", "Концертна зала", "Concert hall"),
+    ("Копия хранится в «Документы\\SCloud» и не пропадёт при удалении программы. \
+                         Чтобы перенести на другой ПК — скопируй туда эту папку.", "Копія зберігається в «Документи\\SCloud» і не зникне після видалення програми. Щоб перенести на інший ПК — скопіюй туди цю теку.", "A copy is kept in “Documents\\SCloud” and survives uninstalling. To move to another PC, copy that folder there."),
+    ("Куда сохранять MP3:", "Куди зберігати MP3:", "Save MP3s to:"),
+    ("Лайк не ушёл в SoundCloud: {e}", "Лайк не дійшов до SoundCloud: {e}", "Like didn’t reach SoundCloud: {e}"),
+    ("Лайки  {}", "Лайки  {}", "Likes  {}"),
+    ("Лайки и история", "Лайки та історія", "Likes and history"),
+    ("Лайки и история синхронизируются с твоим аккаунтом SoundCloud.", "Лайки та історія синхронізуються з твоїм акаунтом SoundCloud.", "Likes and history sync with your SoundCloud account."),
+    ("Любимые артисты, их фиты и похожее", "Улюблені артисти, їхні фіти й схоже", "Favorite artists, their features and similar"),
+    ("Минусовка", "Мінусовка", "Instrumental"),
+    ("Настройки", "Налаштування", "Settings"),
+    ("Не нравится — больше не показывать", "Не подобається — більше не показувати", "Dislike — don’t show again"),
+    ("Не получилось собрать волну — попробуй ещё раз", "Не вдалося зібрати хвилю — спробуй ще раз", "Couldn’t build the wave — try again"),
+    ("Не удалось загрузить тренды: {e}", "Не вдалося завантажити тренди: {e}", "Couldn’t load trending: {e}"),
+    ("Не удалось получить client_id с soundcloud.com", "Не вдалося отримати client_id з soundcloud.com", "Couldn’t get client_id from soundcloud.com"),
+    ("Не удалось скачать: {e}", "Не вдалося завантажити: {e}", "Download failed: {e}"),
+    ("Недавние запросы", "Нещодавні запити", "Recent searches"),
+    ("Недавно играло", "Нещодавно грало", "Recently played"),
+    ("Недавно слушал", "Нещодавно слухав", "Recently played"),
+    ("Ничего не найдено", "Нічого не знайдено", "Nothing found"),
+    ("Нравится", "Подобається", "Like"),
+    ("Океан", "Океан", "Ocean"),
+    ("Оригинал", "Оригінал", "Original"),
+    ("Открыл окно входа SoundCloud…", "Відкрив вікно входу SoundCloud…", "Opened the SoundCloud sign-in window…"),
+    ("Открыть", "Відкрити", "Open"),
+    ("Открыть на soundcloud.com", "Відкрити на soundcloud.com", "Open on soundcloud.com"),
+    ("Открыть папку с копией", "Відкрити теку з копією", "Open backup folder"),
+    ("Оформление", "Оформлення", "Appearance"),
+    ("Очистить", "Очистити", "Clear"),
+    ("Ошибка авторизации в API SoundCloud", "Помилка авторизації в API SoundCloud", "SoundCloud API authorization error"),
+    ("Ошибка поиска: {e}", "Помилка пошуку: {e}", "Search error: {e}"),
+    ("Плеер не запустился ({e}). Проверь, что libmpv установлен.", "Плеєр не запустився ({e}). Перевір, що libmpv встановлено.", "Player failed to start ({e}). Check that libmpv is installed."),
+    ("По умолчанию", "За замовчуванням", "Default"),
+    ("Под водой", "Під водою", "Underwater"),
+    ("Позиция", "Позиція", "Position"),
+    ("Поиск", "Пошук", "Search"),
+    ("Пока пусто — жми ♥ у трека, и он появится здесь", "Поки порожньо — тисни ♥ біля треку, і він з’явиться тут", "Nothing yet — tap ♥ on a track and it shows up here"),
+    ("Показывать «Слушает …» в Discord", "Показувати «Слухає …» у Discord", "Show “Listening to …” in Discord"),
+    ("Полночь", "Північ", "Midnight"),
+    ("Поп", "Поп", "Pop"),
+    ("Последние 30 дней", "Останні 30 днів", "Last 30 days"),
+    ("Приглушить (под водой)", "Приглушити (під водою)", "Muffle (underwater)"),
+    ("Прозрачность окна", "Прозорість вікна", "Window transparency"),
+    ("Результаты по запросу «{}»", "Результати за запитом «{}»", "Results for “{}”"),
+    ("Сбросить", "Скинути", "Reset"),
+    ("Сбросить к GTA VI", "Скинути до GTA VI", "Reset to GTA VI"),
+    ("Свежие артисты рядом с тем, что ты слушал сегодня", "Свіжі артисти поруч із тим, що ти слухав сьогодні", "Fresh artists close to what you played today"),
+    ("Своя", "Своя", "Custom"),
+    ("Сегодня", "Сьогодні", "Today"),
+    ("Серия", "Серія", "Streak"),
+    ("Синхронизация частично не удалась ({})", "Синхронізація частково не вдалася ({})", "Sync partially failed ({})"),
+    ("Синхронизировано с SoundCloud: {} лайков, {} в истории", "Синхронізовано з SoundCloud: {} лайків, {} в історії", "Synced with SoundCloud: {} likes, {} in history"),
+    ("Скачано — показать файл", "Завантажено — показати файл", "Downloaded — show file"),
+    ("Скачано: {name} → {folder}", "Завантажено: {name} → {folder}", "Downloaded: {name} → {folder}"),
+    ("Скачать MP3 (с текущими эффектами FX)", "Завантажити MP3 (з поточними ефектами FX)", "Download MP3 (with current FX)"),
+    ("Сколько ты слушаешь?", "Скільки ти слухаєш?", "How much do you listen?"),
+    ("Скопировать ссылку на SoundCloud", "Скопіювати посилання на SoundCloud", "Copy SoundCloud link"),
+    ("Скорость (slowed ↔ nightcore)", "Швидкість (slowed ↔ nightcore)", "Speed (slowed ↔ nightcore)"),
+    ("Слушать на SoundCloud", "Слухати на SoundCloud", "Listen on SoundCloud"),
+    ("Собираю «{}»…", "Збираю «{}»…", "Building “{}”…"),
+    ("Собираю треки…", "Збираю треки…", "Picking tracks…"),
+    ("Ссылка скопирована: {url}", "Посилання скопійовано: {url}", "Link copied: {url}"),
+    ("Статистика", "Статистика", "Stats"),
+    ("Статистика считается по истории твоего аккаунта SoundCloud.", "Статистика рахується за історією твого акаунта SoundCloud.", "Stats are based on your SoundCloud account history."),
+    ("Статистика: {e}", "Статистика: {e}", "Stats: {e}"),
+    ("Твои лайки", "Твої лайки", "Your likes"),
+    ("Телефон", "Телефон", "Phone"),
+    ("Темп и тон", "Темп і тон", "Tempo and pitch"),
+    ("Тон без изменения скорости", "Тон без зміни швидкості", "Pitch without changing speed"),
+    ("Топ артистов", "Топ артистів", "Top artists"),
+    ("Топ треков", "Топ треків", "Top tracks"),
+    ("Тренды по жанрам", "Тренди за жанрами", "Trending by genre"),
+    ("Трэп", "Треп", "Trap"),
+    ("Ты ещё ничего не слушал", "Ти ще нічого не слухав", "You haven’t played anything yet"),
+    ("Тёмная", "Темна", "Dark"),
+    ("У трека нет потока без DRM (или он недоступен в регионе)", "У треку немає потоку без DRM (або він недоступний у регіоні)", "This track has no DRM-free stream (or isn’t available in your region)"),
+    ("У этого трека нет ссылки", "У цього треку немає посилання", "This track has no link"),
+    ("Убрать из лайков", "Прибрати з лайків", "Remove from likes"),
+    ("Угол", "Кут", "Angle"),
+    ("Удалить из истории", "Видалити з історії", "Remove from history"),
+    ("Удалить ключ", "Видалити ключ", "Remove stop"),
+    ("Хаус", "Хаус", "House"),
+    ("Хип-хоп", "Хіп-хоп", "Hip-hop"),
+    ("Хор", "Хор", "Chorus"),
+    ("Цвет «Волны»", "Колір «Хвилі»", "Wave color"),
+    ("Электроника", "Електроніка", "Electronic"),
+    ("Эффекты", "Ефекти", "Effects"),
+    ("Эффекты: slowed, reverb, bass boost…", "Ефекти: slowed, reverb, bass boost…", "Effects: slowed, reverb, bass boost…"),
+    ("Эхо", "Луна", "Echo"),
+    ("авг", "сер", "Aug"),
+    ("апр", "кві", "Apr"),
+    ("дек", "гру", "Dec"),
+    ("загружаю историю… {} прослушиваний", "завантажую історію… {} прослуховувань", "loading history… {} plays"),
+    ("история: {e}", "історія: {e}", "history: {e}"),
+    ("июл", "лип", "Jul"),
+    ("июн", "чер", "Jun"),
+    ("лайки: {e}", "лайки: {e}", "likes: {e}"),
+    ("май", "тра", "May"),
+    ("макс. {}", "макс. {}", "max {}"),
+    ("мар", "бер", "Mar"),
+    ("не выполнен вход в SoundCloud", "не виконано вхід у SoundCloud", "not signed in to SoundCloud"),
+    ("не удалось создать HTTP-клиент", "не вдалося створити HTTP-клієнт", "failed to create HTTP client"),
+    ("ноя", "лис", "Nov"),
+    ("окт", "жов", "Oct"),
+    ("ошибка ffmpeg", "помилка ffmpeg", "ffmpeg error"),
+    ("сегодня", "сьогодні", "today"),
+    ("сен", "вер", "Sep"),
+    ("фев", "лют", "Feb"),
+    ("янв", "січ", "Jan"),
+    ("📁 Выбрать папку…", "📁 Вибрати теку…", "📁 Choose folder…"),
+    ("🔄 Обновить", "🔄 Оновити", "🔄 Refresh"),
+    ("🔄 Синхронизировать", "🔄 Синхронізувати", "🔄 Sync"),
+];
